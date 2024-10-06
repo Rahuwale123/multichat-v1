@@ -1,0 +1,177 @@
+Sure! Here’s a detailed explanation of your Streamlit application code, which allows users to interact with PDF documents using AI for question-answering. I'll break down the code into its key components and explain each part.
+
+### Imports
+```python
+import streamlit as st
+from PyPDF2 import PdfReader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import os
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+import google.generativeai as genai
+from langchain_community.vectorstores import FAISS
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
+from dotenv import load_dotenv
+```
+- **streamlit**: A library used to create web apps in Python easily. It allows for interactive UI elements like buttons and text inputs.
+- **PyPDF2**: A library for reading and manipulating PDF files. Here, it's used to extract text from uploaded PDF documents.
+- **langchain**: A framework designed to work with language models and chain operations, facilitating AI interactions.
+  - `RecursiveCharacterTextSplitter`: This splits large text into smaller chunks for processing.
+  - `GoogleGenerativeAIEmbeddings`: This generates embeddings for text using Google's generative AI model.
+  - `FAISS`: A library for efficient similarity search and clustering of dense vectors. It’s used to create and manage a vector store.
+  - `ChatGoogleGenerativeAI`: This is an interface to interact with the generative AI model for chat-based applications.
+  - `PromptTemplate`: This defines a template for prompts sent to the AI model.
+  - `LLMChain`: This allows chaining together multiple language model operations.
+- **dotenv**: A library for loading environment variables from a `.env` file, often used to manage sensitive information like API keys.
+
+### Environment Setup
+```python
+load_dotenv()
+api_key = os.getenv("GOOGLE_API_KEY")
+genai.configure(api_key=api_key)
+```
+- `load_dotenv()`: Loads environment variables from a `.env` file, which should contain your `GOOGLE_API_KEY`.
+- `os.getenv("GOOGLE_API_KEY")`: Retrieves the API key from the environment variables.
+- `genai.configure(api_key=api_key)`: Configures the Google generative AI library with the retrieved API key for authentication.
+
+### Function Definitions
+
+#### 1. `get_pdf_text(pdf_docs)`
+```python
+def get_pdf_text(pdf_docs):
+    text = ""
+    for pdf in pdf_docs:
+        pdf_reader = PdfReader(pdf)
+        for page in pdf_reader.pages:
+            text += page.extract_text()
+    return text
+```
+- **Purpose**: This function takes a list of PDF files as input and extracts all the text from each page of the PDFs.
+- **Functionality**:
+  - Initializes an empty string `text` to store extracted text.
+  - Iterates over each PDF file provided in `pdf_docs`.
+  - For each PDF, it creates a `PdfReader` instance and iterates through the pages to extract text using `extract_text()`.
+  - Finally, it returns the concatenated string of text extracted from all pages.
+
+#### 2. `get_text_chunks(text)`
+```python
+def get_text_chunks(text):
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=1000)
+    chunks = text_splitter.split_text(text)
+    return chunks
+```
+- **Purpose**: This function splits the large extracted text into smaller, manageable chunks.
+- **Functionality**:
+  - Initializes a `RecursiveCharacterTextSplitter` with a specified `chunk_size` (10,000 characters) and `chunk_overlap` (1,000 characters).
+  - Calls the `split_text` method to create chunks of text, which helps in processing them efficiently during AI interactions.
+  - Returns the list of text chunks.
+
+#### 3. `get_vector_store(text_chunks)`
+```python
+def get_vector_store(text_chunks):
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
+    vector_store.save_local("faiss_index")
+```
+- **Purpose**: This function creates a vector store from the text chunks for efficient similarity search.
+- **Functionality**:
+  - Initializes `GoogleGenerativeAIEmbeddings` with a specific embedding model.
+  - Creates a FAISS vector store by passing the text chunks and their embeddings.
+  - Saves the vector store locally to the file `faiss_index` for future use.
+
+#### 4. `get_conversational_chain()`
+```python
+def get_conversational_chain():
+    prompt_template = """
+    Answer the question as detailed as possible from the provided context. If the answer is not in
+    the provided context, just say, "answer is not available in the context", don't provide a wrong answer.\n\n
+    Context:\n {context}\n
+    Question: \n{question}\n
+
+    Answer:
+    """
+    
+    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
+
+    llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=0.3)
+    chain = LLMChain(llm=llm, prompt=prompt)
+
+    return chain
+```
+- **Purpose**: This function sets up a conversational chain to answer user questions based on the provided context.
+- **Functionality**:
+  - Defines a `prompt_template` that outlines how to format the AI's response based on the context and user question.
+  - Initializes a `PromptTemplate` with the defined prompt and specifies the input variables.
+  - Creates an instance of `ChatGoogleGenerativeAI`, specifying the model to use and setting a temperature parameter for response variability.
+  - Combines the model and prompt into an `LLMChain`.
+  - Returns the constructed chain for generating responses.
+
+#### 5. `user_input(user_question)`
+```python
+def user_input(user_question):
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    
+    new_db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
+    docs = new_db.similarity_search(user_question)
+
+    context = "\n".join([doc.page_content for doc in docs])
+    
+    chain = get_conversational_chain()
+    
+    response = chain.invoke({"context": context, "question": user_question})
+
+    st.write("Reply: ", response["text"])
+```
+- **Purpose**: This function processes the user's question and retrieves a relevant answer from the AI model.
+- **Functionality**:
+  - Initializes embeddings again to load the saved vector store.
+  - Loads the local FAISS vector store (`faiss_index`).
+  - Performs a similarity search using the user's question to retrieve relevant documents.
+  - Combines the text content of retrieved documents into a single context string.
+  - Calls `get_conversational_chain()` to retrieve the conversational chain.
+  - Invokes the chain with the combined context and user question, getting a response.
+  - Displays the AI's reply using Streamlit's `st.write()`.
+
+### Main Function
+```python
+def main():
+    st.set_page_config(page_title="Chat PDF",page_icon=":books:")
+    st.header("Chat with PDF BY Rahul Wale 👲")
+
+    user_question = st.text_input("Ask a Question from the PDF Files")
+
+    if user_question:
+        user_input(user_question)
+    with st.sidebar:
+        st.title("Menu:")
+        pdf_docs = st.file_uploader("Upload your PDF Files and Click on the Submit & Process Button", accept_multiple_files=True)
+        if st.button("Submit & Process"):
+            with st.spinner("Processing..."):
+                raw_text = get_pdf_text(pdf_docs)
+                text_chunks = get_text_chunks(raw_text)
+                get_vector_store(text_chunks)
+                st.success("Done")
+
+if __name__ == "__main__":
+    main()
+```
+- **Purpose**: This is the main entry point of the Streamlit app where the user interface is built.
+- **Functionality**:
+  - `st.set_page_config`: Sets the title and icon for the web app.
+  - `st.header`: Displays a header on the web page.
+  - `st.text_input`: Creates a text input box for the user to enter their question.
+  - If the user submits a question, it calls `user_input(user_question)` to process it.
+  - The sidebar contains a file uploader where users can upload multiple PDF files.
+  - When the "Submit & Process" button is clicked:
+    - Displays a spinner while processing.
+    - Calls `get_pdf_text()` to extract text from uploaded PDFs.
+    - Calls `get_text_chunks()` to chunk the extracted text.
+    - Calls `get_vector_store()` to create a vector store with the chunks.
+    - Displays a success message upon completion.
+- Finally, `if __name__ == "__main__": main()` ensures that the `main()` function runs when the script is executed directly.
+
+### Summary
+This code creates an interactive web application where users can upload PDF documents, extract text, chunk it for processing, and ask questions related to the content. The AI model provides contextually relevant answers based on the extracted text.
+
+If you have any specific parts you'd like to explore further or if you have more questions about the implementation, feel free to ask!
